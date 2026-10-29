@@ -715,10 +715,55 @@
       return `
         <div class="annex-sheet">
           <div class="annex-caption-bar no-print">Anexo #${idx + 1} • ${escapeHtml(item.label)}</div>
-          <img src="${escapeHtml(item.src)}" loading="lazy" alt="${escapeHtml(item.label)}" />
+          <img src="${escapeHtml(item.src)}" decoding="sync" alt="${escapeHtml(item.label)}" />
         </div>
       `;
     }).join("");
+  }
+
+  function waitForAllAnnexImages() {
+    const imgs = Array.from(cvAnnexesRoot.querySelectorAll("img"));
+    if (imgs.length === 0) return Promise.resolve();
+
+    return new Promise((resolve) => {
+      let overlay = document.getElementById("printLoadingOverlay");
+      if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.id = "printLoadingOverlay";
+        overlay.className = "print-loading-overlay no-print";
+        overlay.innerHTML = `
+          <div class="print-loading-spinner"></div>
+          <div id="printLoadingText" style="font-size:14px; font-weight:600;">Preparando folios documentados (0/${imgs.length})...</div>
+        `;
+        document.body.appendChild(overlay);
+      }
+      const txt = overlay.querySelector("#printLoadingText");
+      let loadedCount = 0;
+
+      const checkDone = () => {
+        loadedCount++;
+        if (txt) {
+          txt.textContent = `Cargando sustentos para impresión (${loadedCount}/${imgs.length})...`;
+        }
+        if (loadedCount >= imgs.length) {
+          setTimeout(() => {
+            overlay.remove();
+            resolve();
+          }, 150);
+        }
+      };
+
+      imgs.forEach((img) => {
+        // Quitar lazy si existiera
+        img.removeAttribute("loading");
+        if (img.complete && img.naturalWidth > 0) {
+          checkDone();
+        } else {
+          img.addEventListener("load", checkDone, { once: true });
+          img.addEventListener("error", checkDone, { once: true });
+        }
+      });
+    });
   }
 
   // =========================================================================
@@ -1384,13 +1429,12 @@
       }, 150);
     });
 
-    document.getElementById("btnPrintDocumentado")?.addEventListener("click", () => {
+    document.getElementById("btnPrintDocumentado")?.addEventListener("click", async () => {
       state.config.includeDocsInPrint = true;
       saveState();
       updatePreview();
-      setTimeout(() => {
-        window.print();
-      }, 300);
+      await waitForAllAnnexImages();
+      window.print();
     });
 
     document.getElementById("btnZoomIn")?.addEventListener("click", () => setZoom(zoomLevel + 10));
