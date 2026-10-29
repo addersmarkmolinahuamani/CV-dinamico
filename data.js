@@ -108,6 +108,26 @@ window.DEFAULT_CV_DATA = {
   ],
   experiencia: [
     {
+      id: "exp-sunass-4",
+      entidad: "SUNASS — Superintendencia Nacional de Servicios de Saneamiento",
+      area: "Oficina de Administración y Finanzas / Fiscalización",
+      cargo: "Servicio de Elaboración de Reportes de Monitoreo de Actividades de Fiscalización Vinculado a Aspectos Operacionales y Metas de Gestión en los Servicios de Agua Potable y Saneamiento Urbano a Nivel Nacional",
+      cargoCorto: "Especialista en Elaboración de Reportes de Monitoreo de Fiscalización en Agua y Saneamiento (OS N° 1422-2025)",
+      documentoSustento: "Constancia de Prestación N° 323-2025 | Orden de Servicio N° 1422-2025",
+      fechaInicio: "2025-08-21",
+      fechaFin: "2025-11-04",
+      diasDeclarados: 75,
+      periodoTexto: "Agosto 2025 – Noviembre 2025 (75 días ejecutados / 110 según OS)",
+      monto: "S/ 12,150.00 (S/ 18,000.00 según OS)",
+      ubicacion: "Lima / Nacional",
+      sector: "Público",
+      esEspecifica: true,
+      descripcion: "Elaboración de reportes técnicos de monitoreo de actividades de fiscalización vinculados a aspectos operacionales y metas de gestión en los servicios de agua potable y saneamiento urbano a nivel nacional. Cumplimiento sin penalidades.",
+      paginasDoc: [56],
+      customDocs: [],
+      visible: true
+    },
+    {
       id: "exp-sunass-3",
       entidad: "SUNASS — Superintendencia Nacional de Servicios de Saneamiento",
       area: "Oficina de Administración y Finanzas / Fiscalización",
@@ -597,3 +617,4 @@ window.DEFAULT_CV_DATA = {
     adicionales: 52
   }
 };
+

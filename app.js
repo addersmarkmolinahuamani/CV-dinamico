@@ -4,7 +4,13 @@
  */
 
 (function () {
-  const STORAGE_KEY = "cv_dinamico_adders_molina_v2";
+  const STORAGE_KEY = "cv_dinamico_adders_molina_v3";
+
+  // Configurar worker de PDF.js si está disponible
+  if (window.pdfjsLib) {
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
 
   // Estado Global
   let state = loadState();
@@ -57,6 +63,9 @@
       }
     } catch (err) {
       console.error("Error guardando en localStorage:", err);
+      if (saveStatus) {
+        saveStatus.innerHTML = `<span class="status-dot" style="background:#f59e0b"></span> Memoria llena (usa Exportar JSON)`;
+      }
     }
   }
 
@@ -84,7 +93,7 @@
   }
 
   // =========================================================================
-  // 2. CÁLCULO AUTOMÁTICO DE EXPERIENCIA Y HORAS LECTIVAS
+  // 2. CÁLCULO AUTOMÁTICO DE EXPERIENCIA, HORAS LECTIVAS Y ANEXOS
   // =========================================================================
   function calculateExperienceStats() {
     const activeExp = state.experiencia.filter(item => item.visible);
@@ -154,32 +163,57 @@
     const includeDividers = state.config.includeSectionDividers !== false;
 
     const addPages = (arr, dividerPage) => {
-      const subPages = [];
+      const sectionItems = [];
       for (const item of arr) {
-        if (item.visible && Array.isArray(item.paginasDoc)) {
+        if (!item.visible) continue;
+
+        // 1. Folios pre-extraídos en assets/certificados/pag_XX.jpg
+        if (Array.isArray(item.paginasDoc)) {
           for (const p of item.paginasDoc) {
             const pNum = Number(p);
-            if (!isNaN(pNum) && pNum >= 2 && pNum <= 55 && !subPages.includes(pNum)) {
-              subPages.push(pNum);
+            if (!isNaN(pNum) && pNum >= 2 && pNum <= 99) {
+              const pStr = String(pNum).padStart(2, "0");
+              const src = `assets/certificados/pag_${pStr}.jpg`;
+              if (!sectionItems.some(x => x.src === src)) {
+                sectionItems.push({
+                  src,
+                  label: `Folio Documentado (Pág. ${pNum})`
+                });
+              }
             }
           }
         }
+
+        // 2. Documentos subidos directamente por el usuario desde la web (customDocs)
+        if (Array.isArray(item.customDocs)) {
+          item.customDocs.forEach((docObj, dIdx) => {
+            if (docObj && docObj.dataUrl) {
+              sectionItems.push({
+                src: docObj.dataUrl,
+                label: `Sustento Adjunto: ${docObj.name || `Archivo #${dIdx + 1}`}`
+              });
+            }
+          });
+        }
       }
-      if (subPages.length > 0) {
+
+      if (sectionItems.length > 0) {
         if (includeDividers && dividerPage) {
-          pages.push({ page: dividerPage, label: "Carátula de Sección" });
+          const divStr = String(dividerPage).padStart(2, "0");
+          pages.push({
+            src: `assets/certificados/pag_${divStr}.jpg`,
+            label: "Carátula de Sección"
+          });
         }
-        for (const sp of subPages) {
-          pages.push({ page: sp, label: `Folio Documentado (Pág. ${sp} del PDF original)` });
-        }
+        pages.push(...sectionItems);
       }
     };
 
-    // Ordenar folios de formación según el PDF original
     const eduItems = state.formacion.filter(item => {
       if (!state.config.showSecondaryEducation && item.tipo === "secundaria") return false;
       return item.visible;
     });
+
     addPages(eduItems, state.caratulas?.formacion || 2);
     addPages(state.experiencia, state.caratulas?.experiencia || 8);
     addPages(state.diplomados, state.caratulas?.diplomados || 23);
@@ -193,45 +227,49 @@
   // 3. RENDERIZADO DEL VISOR DE CV EN TIEMPO REAL (PLANTILLAS 1 Y 2)
   // =========================================================================
   function updatePreview() {
-    // Actualizar variables CSS dinámicas
     document.documentElement.style.setProperty("--cv-original-teal", state.config.primaryColor || "#83c5cb");
     document.documentElement.style.setProperty("--cv-executive-primary", state.config.executiveColor || "#0f4c5c");
     document.documentElement.style.setProperty("--cv-font-scale", (state.config.fontSizeScale || 100) / 100);
 
-    // Sincronizar botones de plantilla en barra superior
     document.querySelectorAll(".tpl-btn").forEach(btn => {
       btn.classList.toggle("active", btn.dataset.tpl === state.config.template);
     });
 
-    // Sincronizar checkbox de documentos
     if (chkPreviewDocs) {
       chkPreviewDocs.checked = !!state.config.includeDocsInPrint;
     }
 
     const stats = calculateExperienceStats();
 
-    // Actualizar barra de métricas en vivo
     if (metricExpTotal) metricExpTotal.textContent = `${stats.general.shortText} (${stats.general.days} d)`;
     if (metricHorasTotal) metricHorasTotal.textContent = `${stats.horasTotales} hrs lectivas`;
     if (metricDocsTotal) metricDocsTotal.textContent = `${stats.totalActiveFolios} págs.`;
     if (lblCountDocs) lblCountDocs.textContent = stats.totalActiveFolios;
 
-    // Renderizar plantilla seleccionada
     if (state.config.template === "original") {
       cvDocumentRoot.innerHTML = renderOriginalTemplate(stats);
     } else {
       cvDocumentRoot.innerHTML = renderExecutiveTemplate(stats);
     }
 
-    // Renderizar Anexos Documentados si está activado
     renderAnnexes(stats.activePages);
   }
 
-  function renderFolioButton(paginasDoc, title) {
-    if (!Array.isArray(paginasDoc) || paginasDoc.length === 0) return "";
-    const pagesStr = paginasDoc.join(",");
-    return `<button type="button" class="doc-folio-pill no-print" data-pages="${escapeHtml(pagesStr)}" data-title="${escapeHtml(title)}" title="Ver certificado/constancia escaneada">
-      📄 Ver sustento (${paginasDoc.length > 1 ? `Págs. ${pagesStr}` : `Pág. ${pagesStr}`})
+  function hasAnyDocs(item) {
+    const hasPages = Array.isArray(item.paginasDoc) && item.paginasDoc.length > 0;
+    const hasCustom = Array.isArray(item.customDocs) && item.customDocs.length > 0;
+    return hasPages || hasCustom;
+  }
+
+  function renderFolioButton(item, listName, index, title) {
+    if (!hasAnyDocs(item)) return "";
+    const pCount = (item.paginasDoc?.length || 0) + (item.customDocs?.length || 0);
+    const label = item.paginasDoc?.length
+      ? `Pág. ${item.paginasDoc.join(",")}${item.customDocs?.length ? ` +${item.customDocs.length}` : ""}`
+      : `${pCount} adjunto(s)`;
+
+    return `<button type="button" class="doc-folio-pill no-print" data-list="${escapeHtml(listName)}" data-index="${index}" data-title="${escapeHtml(title)}" title="Ver certificado/constancia escaneada">
+      📄 Ver sustento (${escapeHtml(label)})
     </button>`;
   }
 
@@ -245,20 +283,21 @@
     const col1Blandas = compBlandas.slice(0, midPoint);
     const col2Blandas = compBlandas.slice(midPoint);
 
-    // En la página 1 original del PDF, la formación va cronológica (2008-2009 -> 2010-2012 -> 2015-2021)
-    const eduItems = [...state.formacion]
-      .filter(item => item.visible && (state.config.showSecondaryEducation || item.tipo !== "secundaria"))
+    const eduEntries = state.formacion
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.visible && (state.config.showSecondaryEducation || item.tipo !== "secundaria"))
       .reverse();
 
     const activeLogos = (state.logosEducacion || []).filter(l => l.visible);
-    const activeExp = state.experiencia.filter(e => e.visible && (state.config.experienceFilter !== "especifica" || e.esEspecifica));
-    const activeDip = state.diplomados.filter(d => d.visible);
-    const activeCur = state.cursos.filter(c => c.visible);
-    const activeAdi = (state.adicionales || []).filter(a => a.visible);
+    const expEntries = state.experiencia
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.visible && (state.config.experienceFilter !== "especifica" || item.esEspecifica));
+    const dipEntries = state.diplomados.map((item, idx) => ({ item, idx })).filter(({ item }) => item.visible);
+    const curEntries = state.cursos.map((item, idx) => ({ item, idx })).filter(({ item }) => item.visible);
+    const adiEntries = (state.adicionales || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.visible);
 
     return `
       <article class="a4-sheet tpl-original">
-        <!-- CABECERA TURQUESA FIEL AL PDF -->
         <header class="orig-header-banner">
           <div class="orig-photo-box" style="${p.mostrarFoto ? "" : "visibility:hidden"}">
             <img src="${escapeHtml(p.foto)}" alt="Fotografía de ${escapeHtml(p.nombres)}" />
@@ -294,10 +333,8 @@
         </header>
 
         <div class="orig-body">
-          <!-- RESUMEN PROFESIONAL -->
           ${p.resumen ? `<p class="orig-summary">${escapeHtml(p.resumen)}</p>` : ""}
 
-          <!-- COMPETENCIAS -->
           <div class="orig-section-heading">
             <span>COMPETENCIAS</span>
           </div>
@@ -314,12 +351,11 @@
             </div>
           </div>
 
-          <!-- FORMACIÓN ACADÉMICA -->
           <div class="orig-section-heading">
             <span>FORMACIÓN ACADÉMICA</span>
           </div>
           <div class="orig-edu-list">
-            ${eduItems.map(edu => `
+            ${eduEntries.map(({ item: edu, idx }) => `
               <div class="orig-edu-row">
                 <div class="orig-edu-left">
                   <div class="orig-edu-years">${escapeHtml(edu.periodo)}</div>
@@ -328,7 +364,7 @@
                 <div class="orig-edu-right">
                   <div class="orig-edu-title">
                     ${escapeHtml(edu.titulo)}
-                    ${renderFolioButton(edu.paginasDoc, edu.titulo)}
+                    ${renderFolioButton(edu, "formacion", idx, edu.titulo)}
                   </div>
                   <div class="orig-edu-inst">${escapeHtml(edu.institucion)}</div>
                   ${edu.destacado ? `<div class="orig-edu-highlight">${escapeHtml(edu.destacado)}</div>` : ""}
@@ -342,22 +378,20 @@
             `).join("")}
           </div>
 
-          <!-- LOGOS INSTITUCIONALES (PIE DE PÁGINA 1 FIEL AL PDF) -->
           ${state.config.showInstitutionLogos && activeLogos.length > 0 ? `
             <div class="orig-logos-strip">
               ${activeLogos.map(l => `<img class="orig-logo-item" src="${escapeHtml(l.imagen)}" alt="${escapeHtml(l.nombre)}" />`).join("")}
             </div>
           ` : ""}
 
-          <!-- SECCIONES EXTENDIDAS EN ESTILO CLÁSICO (SI ESTÁN HABILITADAS) -->
           ${state.config.showExperienceInOriginal ? `
-            ${activeExp.length > 0 ? `
+            ${expEntries.length > 0 ? `
               <div class="orig-extra-block">
                 <div class="orig-section-heading">
                   <span>EXPERIENCIA PROFESIONAL Y LABORAL</span>
                   ${state.config.showExperienceSummaryBox ? `<span class="orig-section-subbadge">Acumulado Activo: ${escapeHtml(stats.general.shortText)} (${stats.general.days} días)</span>` : ""}
                 </div>
-                ${activeExp.map(exp => `
+                ${expEntries.map(({ item: exp, idx }) => `
                   <div class="orig-exp-item">
                     <div class="orig-edu-left">
                       <div class="orig-edu-years">${escapeHtml(exp.periodoTexto)}</div>
@@ -366,7 +400,7 @@
                     <div class="orig-edu-right">
                       <div class="orig-edu-title">
                         ${escapeHtml(exp.cargoCorto || exp.cargo)}
-                        ${renderFolioButton(exp.paginasDoc, exp.entidad)}
+                        ${renderFolioButton(exp, "experiencia", idx, exp.entidad)}
                       </div>
                       <div class="orig-edu-inst">${escapeHtml(exp.entidad)}</div>
                       <div class="orig-exp-meta">${escapeHtml(exp.documentoSustento)} ${exp.monto ? `• Monto: ${escapeHtml(exp.monto)}` : ""}</div>
@@ -376,13 +410,13 @@
               </div>
             ` : ""}
 
-            ${activeDip.length > 0 ? `
+            ${dipEntries.length > 0 ? `
               <div class="orig-extra-block">
                 <div class="orig-section-heading">
                   <span>DIPLOMADOS Y PROGRAMAS DE ESPECIALIZACIÓN</span>
                   ${state.config.showExperienceSummaryBox ? `<span class="orig-section-subbadge">${stats.horasDiplomados} horas lectivas</span>` : ""}
                 </div>
-                ${activeDip.map(dip => `
+                ${dipEntries.map(({ item: dip, idx }) => `
                   <div class="orig-exp-item">
                     <div class="orig-edu-left">
                       <div class="orig-edu-years">${escapeHtml(dip.horas)} Horas</div>
@@ -391,7 +425,7 @@
                     <div class="orig-edu-right">
                       <div class="orig-edu-title">
                         ${escapeHtml(dip.titulo)}
-                        ${renderFolioButton(dip.paginasDoc, dip.titulo)}
+                        ${renderFolioButton(dip, "diplomados", idx, dip.titulo)}
                       </div>
                       <div class="orig-edu-inst">${escapeHtml(dip.institucion)} (${escapeHtml(dip.fecha)})</div>
                     </div>
@@ -400,13 +434,13 @@
               </div>
             ` : ""}
 
-            ${activeCur.length > 0 ? `
+            ${curEntries.length > 0 ? `
               <div class="orig-extra-block">
                 <div class="orig-section-heading">
                   <span>CURSOS, TALLERES Y CAPACITACIONES</span>
                   ${state.config.showExperienceSummaryBox ? `<span class="orig-section-subbadge">${stats.horasCursos} horas lectivas</span>` : ""}
                 </div>
-                ${activeCur.map(cur => `
+                ${curEntries.map(({ item: cur, idx }) => `
                   <div class="orig-exp-item">
                     <div class="orig-edu-left">
                       <div class="orig-edu-years">${escapeHtml(cur.horas)} Horas</div>
@@ -415,7 +449,7 @@
                     <div class="orig-edu-right">
                       <div class="orig-edu-title">
                         ${escapeHtml(cur.titulo)}
-                        ${renderFolioButton(cur.paginasDoc, cur.titulo)}
+                        ${renderFolioButton(cur, "cursos", idx, cur.titulo)}
                       </div>
                       <div class="orig-edu-inst">${escapeHtml(cur.institucion)} • ${escapeHtml(cur.nota)}</div>
                     </div>
@@ -424,12 +458,12 @@
               </div>
             ` : ""}
 
-            ${activeAdi.length > 0 ? `
+            ${adiEntries.length > 0 ? `
               <div class="orig-extra-block">
                 <div class="orig-section-heading">
                   <span>INFORMACIÓN ADICIONAL Y RECONOCIMIENTOS</span>
                 </div>
-                ${activeAdi.map(adi => `
+                ${adiEntries.map(({ item: adi, idx }) => `
                   <div class="orig-exp-item">
                     <div class="orig-edu-left">
                       <div class="orig-edu-years">${escapeHtml(adi.fecha)}</div>
@@ -437,7 +471,7 @@
                     <div class="orig-edu-right">
                       <div class="orig-edu-title">
                         ${escapeHtml(adi.titulo)}
-                        ${renderFolioButton(adi.paginasDoc, adi.titulo)}
+                        ${renderFolioButton(adi, "adicionales", idx, adi.titulo)}
                       </div>
                       <div class="orig-edu-inst">${escapeHtml(adi.institucion)} — ${escapeHtml(adi.detalle)}</div>
                     </div>
@@ -452,21 +486,24 @@
   }
 
   // -------------------------------------------------------------------------
-  // PLANTILLA 2: PROPUESTA EJECUTIVA PRO / ATS (RECOMENDADA PARA CONVOCATORIAS)
+  // PLANTILLA 2: PROPUESTA EJECUTIVA PRO / ATS
   // -------------------------------------------------------------------------
   function renderExecutiveTemplate(stats) {
     const p = state.personal;
-    const activeExp = state.experiencia.filter(e => e.visible && (state.config.experienceFilter !== "especifica" || e.esEspecifica));
-    const activeEdu = state.formacion.filter(item => item.visible && (state.config.showSecondaryEducation || item.tipo !== "secundaria"));
-    const activeDip = state.diplomados.filter(d => d.visible);
-    const activeCur = state.cursos.filter(c => c.visible);
-    const activeAdi = (state.adicionales || []).filter(a => a.visible);
+    const expEntries = state.experiencia
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.visible && (state.config.experienceFilter !== "especifica" || item.esEspecifica));
+    const eduEntries = state.formacion
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.visible && (state.config.showSecondaryEducation || item.tipo !== "secundaria"));
+    const dipEntries = state.diplomados.map((item, idx) => ({ item, idx })).filter(({ item }) => item.visible);
+    const curEntries = state.cursos.map((item, idx) => ({ item, idx })).filter(({ item }) => item.visible);
+    const adiEntries = (state.adicionales || []).map((item, idx) => ({ item, idx })).filter(({ item }) => item.visible);
     const activeSw = (state.competencias.softwareTags || []).filter(s => s.visible);
     const activeBlandas = state.competencias.blandas.filter(b => b.visible);
 
     return `
       <article class="a4-sheet tpl-ejecutivo">
-        <!-- CABECERA EJECUTIVA -->
         <header class="exec-header ${p.mostrarFoto ? "with-photo" : ""}">
           ${p.mostrarFoto ? `
             <div class="exec-photo">
@@ -488,7 +525,6 @@
           </div>
         </header>
 
-        <!-- BARRA KPI DE TIEMPO DE EXPERIENCIA Y CAPACITACIÓN -->
         ${state.config.showExperienceSummaryBox ? `
           <section class="exec-kpi-strip">
             <div class="exec-kpi-box">
@@ -501,7 +537,7 @@
             </div>
             <div class="exec-kpi-box">
               <span class="exec-kpi-label">Diplomados / Especialización</span>
-              <span class="exec-kpi-val">${activeDip.length} prog. (${stats.horasDiplomados} hrs)</span>
+              <span class="exec-kpi-val">${dipEntries.length} prog. (${stats.horasDiplomados} hrs)</span>
             </div>
             <div class="exec-kpi-box">
               <span class="exec-kpi-label">Total Horas Capacitación</span>
@@ -510,23 +546,21 @@
           </section>
         ` : ""}
 
-        <!-- PERFIL PROFESIONAL -->
         ${p.resumen ? `<p class="exec-summary-text">${escapeHtml(p.resumen)}</p>` : ""}
 
-        <!-- FORMACIÓN ACADÉMICA -->
-        ${activeEdu.length > 0 ? `
+        ${eduEntries.length > 0 ? `
           <section class="exec-section">
             <h2 class="exec-section-title">
               <span>Formación Académica</span>
               <span class="exec-section-badge">UNI • COAR Lima</span>
             </h2>
             <div class="exec-exp-list">
-              ${activeEdu.map(edu => `
+              ${eduEntries.map(({ item: edu, idx }) => `
                 <div class="exec-exp-item">
                   <div class="exec-exp-top">
                     <span class="exec-exp-role">
                       ${escapeHtml(edu.titulo)}
-                      ${renderFolioButton(edu.paginasDoc, edu.titulo)}
+                      ${renderFolioButton(edu, "formacion", idx, edu.titulo)}
                     </span>
                     <span class="exec-exp-date">${escapeHtml(edu.periodo)} | ${escapeHtml(edu.ubicacion)}</span>
                   </div>
@@ -545,20 +579,19 @@
           </section>
         ` : ""}
 
-        <!-- EXPERIENCIA PROFESIONAL -->
-        ${activeExp.length > 0 ? `
+        ${expEntries.length > 0 ? `
           <section class="exec-section">
             <h2 class="exec-section-title">
               <span>Experiencia Profesional y de Especialidad</span>
-              <span class="exec-section-badge">${activeExp.length} registros acreditados • ${escapeHtml(stats.general.shortText)}</span>
+              <span class="exec-section-badge">${expEntries.length} registros acreditados • ${escapeHtml(stats.general.shortText)}</span>
             </h2>
             <div class="exec-exp-list">
-              ${activeExp.map(exp => `
+              ${expEntries.map(({ item: exp, idx }) => `
                 <div class="exec-exp-item">
                   <div class="exec-exp-top">
                     <span class="exec-exp-role">
                       ${escapeHtml(exp.cargoCorto || exp.cargo)}
-                      ${renderFolioButton(exp.paginasDoc, `${exp.entidad} - ${exp.documentoSustento}`)}
+                      ${renderFolioButton(exp, "experiencia", idx, `${exp.entidad} - ${exp.documentoSustento}`)}
                     </span>
                     <span class="exec-exp-date">${escapeHtml(exp.periodoTexto)}</span>
                   </div>
@@ -573,20 +606,19 @@
           </section>
         ` : ""}
 
-        <!-- DIPLOMADOS Y PROGRAMAS DE ESPECIALIZACIÓN -->
-        ${activeDip.length > 0 ? `
+        ${dipEntries.length > 0 ? `
           <section class="exec-section">
             <h2 class="exec-section-title">
               <span>Diplomados y Programas de Especialización</span>
               <span class="exec-section-badge">${stats.horasDiplomados} horas lectivas acreditadas</span>
             </h2>
             <div class="exec-compact-grid">
-              ${activeDip.map(dip => `
+              ${dipEntries.map(({ item: dip, idx }) => `
                 <div class="exec-course-row">
                   <div class="exec-course-main">
                     <div class="exec-course-title">
                       ${escapeHtml(dip.titulo)}
-                      ${renderFolioButton(dip.paginasDoc, dip.titulo)}
+                      ${renderFolioButton(dip, "diplomados", idx, dip.titulo)}
                     </div>
                     <div class="exec-course-inst">
                       <strong>${escapeHtml(dip.institucion)}</strong> • ${escapeHtml(dip.fecha)}
@@ -604,20 +636,19 @@
           </section>
         ` : ""}
 
-        <!-- CURSOS Y CAPACITACIONES TÉCNICAS -->
-        ${activeCur.length > 0 ? `
+        ${curEntries.length > 0 ? `
           <section class="exec-section">
             <h2 class="exec-section-title">
               <span>Cursos, Talleres y Capacitación Técnica</span>
               <span class="exec-section-badge">${stats.horasCursos} horas lectivas</span>
             </h2>
             <div class="exec-compact-grid">
-              ${activeCur.map(cur => `
+              ${curEntries.map(({ item: cur, idx }) => `
                 <div class="exec-course-row">
                   <div class="exec-course-main">
                     <span class="exec-course-title">${escapeHtml(cur.titulo)}</span>
                     <span class="exec-course-inst"> — ${escapeHtml(cur.institucion)} (${escapeHtml(cur.fecha)})</span>
-                    ${renderFolioButton(cur.paginasDoc, cur.titulo)}
+                    ${renderFolioButton(cur, "cursos", idx, cur.titulo)}
                   </div>
                   <div class="exec-course-meta">
                     ${cur.horas ? `<span class="badge-hours">${escapeHtml(cur.horas)} hrs</span>` : ""}
@@ -629,7 +660,6 @@
           </section>
         ` : ""}
 
-        <!-- COMPETENCIAS Y HERRAMIENTAS DE SOFTWARE -->
         <section class="exec-section">
           <h2 class="exec-section-title">
             <span>Software Especializado y Competencias</span>
@@ -650,19 +680,18 @@
           </div>
         </section>
 
-        <!-- INFORMACIÓN ADICIONAL Y MÉRITOS -->
-        ${activeAdi.length > 0 ? `
+        ${adiEntries.length > 0 ? `
           <section class="exec-section">
             <h2 class="exec-section-title">
               <span>Licencias, Méritos y Participación Cívica</span>
             </h2>
             <div class="exec-compact-grid">
-              ${activeAdi.map(adi => `
+              ${adiEntries.map(({ item: adi, idx }) => `
                 <div class="exec-course-row">
                   <div class="exec-course-main">
                     <span class="exec-course-title">${escapeHtml(adi.titulo)}</span>
                     <span class="exec-course-inst"> — ${escapeHtml(adi.institucion)} (${escapeHtml(adi.fecha)})</span>
-                    ${renderFolioButton(adi.paginasDoc, adi.titulo)}
+                    ${renderFolioButton(adi, "adicionales", idx, adi.titulo)}
                   </div>
                 </div>
               `).join("")}
@@ -674,7 +703,7 @@
   }
 
   // -------------------------------------------------------------------------
-  // RENDERIZADO DE HOJAS ANEXAS DOCUMENTADAS (PÁGINAS 2 A 55)
+  // RENDERIZADO DE HOJAS ANEXAS DOCUMENTADAS
   // -------------------------------------------------------------------------
   function renderAnnexes(activePages) {
     if (!state.config.includeDocsInPrint || activePages.length === 0) {
@@ -683,19 +712,52 @@
     }
 
     cvAnnexesRoot.innerHTML = activePages.map((item, idx) => {
-      const pStr = String(item.page).padStart(2, "0");
       return `
         <div class="annex-sheet">
           <div class="annex-caption-bar no-print">Anexo #${idx + 1} • ${escapeHtml(item.label)}</div>
-          <img src="assets/certificados/pag_${pStr}.jpg" loading="lazy" alt="Sustento Documentado Página ${pStr}" />
+          <img src="${escapeHtml(item.src)}" loading="lazy" alt="${escapeHtml(item.label)}" />
         </div>
       `;
     }).join("");
   }
 
   // =========================================================================
-  // 4. RENDERIZADO DEL PANEL LATERAL EDITOR (6 PESTAÑAS)
+  // 4. RENDERIZADO DEL PANEL LATERAL EDITOR (CON BOTÓN DE ADJUNTAR SUSTENTO)
   // =========================================================================
+  function renderCardDocControls(item, listName, idx, title) {
+    const hasDocs = hasAnyDocs(item);
+    const pagesLabel = item.paginasDoc?.length ? `Pág. ${item.paginasDoc.join(",")}` : "";
+    const customCount = item.customDocs?.length || 0;
+    const btnText = pagesLabel
+      ? `📄 ${pagesLabel}${customCount ? ` (+${customCount})` : ""}`
+      : `📄 Ver (${customCount})`;
+
+    return `
+      ${hasDocs ? `<button type="button" class="icon-btn btn-doc-preview" data-list="${listName}" data-index="${idx}" data-title="${escapeHtml(title)}" title="Previsualizar certificado/constancia">${btnText}</button>` : ""}
+      <label class="icon-btn btn-doc-upload" title="Subir PDF o Imagen de Constancia/Certificado desde tu PC">
+        📎 Adjuntar
+        <input type="file" accept="application/pdf,image/*" data-upload-list="${listName}" data-upload-index="${idx}" hidden multiple />
+      </label>
+    `;
+  }
+
+  function renderCustomDocsList(item, listName, idx) {
+    if (!Array.isArray(item.customDocs) || item.customDocs.length === 0) return "";
+    return `
+      <div class="form-group col-span-2">
+        <label class="form-label">Archivos Sustentatorios Subidos (${item.customDocs.length} página/imagen)</label>
+        <div class="custom-docs-bar">
+          ${item.customDocs.map((docObj, cIdx) => `
+            <span class="custom-doc-badge">
+              <span>📄 ${escapeHtml(docObj.name || `Hoja #${cIdx + 1}`)}</span>
+              <button type="button" data-action="remove-custom-doc" data-list="${listName}" data-index="${idx}" data-doc-index="${cIdx}" title="Quitar este archivo">×</button>
+            </span>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderSidebar() {
     if (activeTab === "perfil") {
       renderTabPerfil();
@@ -779,7 +841,6 @@
         </div>
       </div>
 
-      <!-- COMPETENCIAS Y SOFTWARE -->
       <div class="form-card">
         <div class="editor-section-header">
           <h3 class="editor-section-title">Software y Competencias</h3>
@@ -837,7 +898,7 @@
         <h2 class="editor-section-title">Formación Académica (${state.formacion.length})</h2>
         <button type="button" class="btn-xs btn-add" data-action="add-item" data-list="formacion">+ Agregar Estudio</button>
       </div>
-      <p class="editor-section-desc">Activa o edita tus grados universitarios y estudios secundarios. Puedes ocultar la secundaria con un clic para convocatorias profesionales.</p>
+      <p class="editor-section-desc">Activa o edita tus grados universitarios y estudios secundarios. Usa <strong>📎 Adjuntar</strong> para subir cualquier diploma nuevo en PDF o imagen.</p>
 
       <div class="quick-actions-row">
         <label class="toggle-inline">
@@ -858,7 +919,7 @@
               <span>${escapeHtml(item.titulo || "Estudio Académico")}</span>
             </label>
             <div class="card-controls">
-              ${item.paginasDoc?.length ? `<button type="button" class="icon-btn btn-doc-preview" data-pages="${item.paginasDoc.join(",")}" data-title="${escapeHtml(item.titulo)}">📄 Sustento</button>` : ""}
+              ${renderCardDocControls(item, "formacion", idx, item.titulo)}
               <button type="button" class="icon-btn" data-action="move-up" data-list="formacion" data-index="${idx}" title="Subir">↑</button>
               <button type="button" class="icon-btn" data-action="move-down" data-list="formacion" data-index="${idx}" title="Bajar">↓</button>
               <button type="button" class="icon-btn btn-delete" data-action="delete-item" data-list="formacion" data-index="${idx}" title="Eliminar">🗑</button>
@@ -897,6 +958,7 @@
               <label class="form-label">Viñetas / Grados obtenidos (1 por línea)</label>
               <textarea class="form-textarea" rows="2" data-list="formacion" data-index="${idx}" data-field="detalles">${escapeHtml((item.detalles || []).join("\n"))}</textarea>
             </div>
+            ${renderCustomDocsList(item, "formacion", idx)}
           </div>
         </div>
       `).join("")}
@@ -910,7 +972,7 @@
         <h2 class="editor-section-title">Experiencia Laboral (${state.experiencia.length})</h2>
         <button type="button" class="btn-xs btn-add" data-action="add-item" data-list="experiencia">+ Nueva Experiencia</button>
       </div>
-      <p class="editor-section-desc">Activa o desactiva órdenes de servicio y certificados según la convocatoria. El tiempo total de experiencia se recalcula al instante.</p>
+      <p class="editor-section-desc">Activa o desactiva órdenes de servicio y constancias según la convocatoria. Puedes adjuntar nuevos certificados en PDF o imagen con el botón <strong>📎 Adjuntar</strong>.</p>
 
       <div class="quick-actions-row">
         <button type="button" class="btn-xs" data-action="toggle-all-exp" data-mode="all">✅ Activar Todas</button>
@@ -926,7 +988,7 @@
               <span>${escapeHtml(exp.entidad.split("—")[0].trim())} — ${escapeHtml(exp.periodoTexto)}</span>
             </label>
             <div class="card-controls">
-              ${exp.paginasDoc?.length ? `<button type="button" class="icon-btn btn-doc-preview" data-pages="${exp.paginasDoc.join(",")}" data-title="${escapeHtml(exp.entidad)}">📄 Pág. ${exp.paginasDoc.join(",")}</button>` : ""}
+              ${renderCardDocControls(exp, "experiencia", idx, exp.entidad)}
               <button type="button" class="icon-btn" data-action="move-up" data-list="experiencia" data-index="${idx}" title="Subir">↑</button>
               <button type="button" class="icon-btn" data-action="move-down" data-list="experiencia" data-index="${idx}" title="Bajar">↓</button>
               <button type="button" class="icon-btn btn-delete" data-action="delete-item" data-list="experiencia" data-index="${idx}" title="Eliminar">🗑</button>
@@ -969,9 +1031,10 @@
               </label>
             </div>
             <div class="form-group">
-              <label class="form-label">Folio PDF (Pág.)</label>
+              <label class="form-label">Folio Base (Pág.)</label>
               <input type="text" class="form-input" data-list="experiencia" data-index="${idx}" data-field="paginasDoc" value="${escapeHtml((exp.paginasDoc || []).join(", "))}" />
             </div>
+            ${renderCustomDocsList(exp, "experiencia", idx)}
           </div>
         </div>
       `).join("")}
@@ -995,7 +1058,7 @@
               <span>${escapeHtml(dip.titulo)}</span>
             </label>
             <div class="card-controls">
-              ${dip.paginasDoc?.length ? `<button type="button" class="icon-btn btn-doc-preview" data-pages="${dip.paginasDoc.join(",")}" data-title="${escapeHtml(dip.titulo)}">📄 Pág. ${dip.paginasDoc.join(",")}</button>` : ""}
+              ${renderCardDocControls(dip, "diplomados", idx, dip.titulo)}
               <button type="button" class="icon-btn" data-action="move-up" data-list="diplomados" data-index="${idx}" title="Subir">↑</button>
               <button type="button" class="icon-btn" data-action="move-down" data-list="diplomados" data-index="${idx}" title="Bajar">↓</button>
               <button type="button" class="icon-btn btn-delete" data-action="delete-item" data-list="diplomados" data-index="${idx}" title="Eliminar">🗑</button>
@@ -1024,13 +1087,14 @@
               <input type="text" class="form-input" data-list="diplomados" data-index="${idx}" data-field="nota" value="${escapeHtml(dip.nota)}" />
             </div>
             <div class="form-group">
-              <label class="form-label">Folio PDF (Pág.)</label>
+              <label class="form-label">Folio Base (Pág.)</label>
               <input type="text" class="form-input" data-list="diplomados" data-index="${idx}" data-field="paginasDoc" value="${escapeHtml((dip.paginasDoc || []).join(", "))}" />
             </div>
             <div class="form-group col-span-2">
               <label class="form-label">Módulos / Detalle Curricular</label>
               <textarea class="form-textarea" rows="2" data-list="diplomados" data-index="${idx}" data-field="detalle">${escapeHtml(dip.detalle)}</textarea>
             </div>
+            ${renderCustomDocsList(dip, "diplomados", idx)}
           </div>
         </div>
       `).join("")}
@@ -1054,7 +1118,7 @@
               <span>${escapeHtml(cur.titulo)}</span>
             </label>
             <div class="card-controls">
-              ${cur.paginasDoc?.length ? `<button type="button" class="icon-btn btn-doc-preview" data-pages="${cur.paginasDoc.join(",")}" data-title="${escapeHtml(cur.titulo)}">📄 Pág. ${cur.paginasDoc.join(",")}</button>` : ""}
+              ${renderCardDocControls(cur, "cursos", idx, cur.titulo)}
               <button type="button" class="icon-btn" data-action="move-up" data-list="cursos" data-index="${idx}" title="Subir">↑</button>
               <button type="button" class="icon-btn" data-action="move-down" data-list="cursos" data-index="${idx}" title="Bajar">↓</button>
               <button type="button" class="icon-btn btn-delete" data-action="delete-item" data-list="cursos" data-index="${idx}" title="Eliminar">🗑</button>
@@ -1083,14 +1147,14 @@
               <input type="text" class="form-input" data-list="cursos" data-index="${idx}" data-field="nota" value="${escapeHtml(cur.nota)}" />
             </div>
             <div class="form-group">
-              <label class="form-label">Folio PDF (Pág.)</label>
+              <label class="form-label">Folio Base (Pág.)</label>
               <input type="text" class="form-input" data-list="cursos" data-index="${idx}" data-field="paginasDoc" value="${escapeHtml((cur.paginasDoc || []).join(", "))}" />
             </div>
+            ${renderCustomDocsList(cur, "cursos", idx)}
           </div>
         </div>
       `).join("")}
 
-      <!-- SECCIÓN ADICIONALES -->
       <div class="editor-section-header" style="margin-top:20px">
         <h2 class="editor-section-title">Adicionales y Reconocimientos (${(state.adicionales || []).length})</h2>
         <button type="button" class="btn-xs btn-add" data-action="add-item" data-list="adicionales">+ Añadir Adicional</button>
@@ -1103,7 +1167,7 @@
               <span>${escapeHtml(adi.titulo)}</span>
             </label>
             <div class="card-controls">
-              ${adi.paginasDoc?.length ? `<button type="button" class="icon-btn btn-doc-preview" data-pages="${adi.paginasDoc.join(",")}" data-title="${escapeHtml(adi.titulo)}">📄 Pág. ${adi.paginasDoc.join(",")}</button>` : ""}
+              ${renderCardDocControls(adi, "adicionales", idx, adi.titulo)}
               <button type="button" class="icon-btn btn-delete" data-action="delete-item" data-list="adicionales" data-index="${idx}" title="Eliminar">🗑</button>
             </div>
           </div>
@@ -1120,6 +1184,7 @@
               <label class="form-label">Fecha</label>
               <input type="text" class="form-input" data-list="adicionales" data-index="${idx}" data-field="fecha" value="${escapeHtml(adi.fecha)}" />
             </div>
+            ${renderCustomDocsList(adi, "adicionales", idx)}
           </div>
         </div>
       `).join("")}
@@ -1188,10 +1253,91 @@
   }
 
   // =========================================================================
-  // 5. EVENTOS Y ACTUALIZACIÓN EN TIEMPO REAL
+  // 5. SUBIDA DE ARCHIVOS PDF / IMÁGENES DE SUSTENTO EN NAVEGADOR
+  // =========================================================================
+  async function handleAttachmentUpload(files, listName, idx) {
+    const item = state[listName]?.[idx];
+    if (!item || !files || files.length === 0) return;
+
+    if (!Array.isArray(item.customDocs)) {
+      item.customDocs = [];
+    }
+
+    for (const file of Array.from(files)) {
+      if (file.type === "application/pdf") {
+        if (!window.pdfjsLib) {
+          alert("El lector de PDF aún está cargando. Intenta de nuevo en unos segundos.");
+          continue;
+        }
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const viewport = page.getViewport({ scale: 1.6 });
+            const canvas = document.createElement("canvas");
+            const ctx = canvas.getContext("2d");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: ctx, viewport }).promise;
+            const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
+            item.customDocs.push({
+              name: `${file.name} (Pág. ${pageNum})`,
+              dataUrl
+            });
+          }
+        } catch (err) {
+          console.error("Error procesando PDF adjunto:", err);
+          alert(`No se pudo procesar el PDF "${file.name}".`);
+        }
+      } else if (file.type.startsWith("image/")) {
+        const dataUrl = await readImageCompressed(file);
+        if (dataUrl) {
+          item.customDocs.push({
+            name: file.name,
+            dataUrl
+          });
+        }
+      }
+    }
+
+    saveState();
+    renderSidebar();
+    updatePreview();
+  }
+
+  function readImageCompressed(file) {
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxDim = 1600;
+          let { width, height } = img;
+          if (width > maxDim || height > maxDim) {
+            const ratio = Math.min(maxDim / width, maxDim / height);
+            width = Math.round(width * ratio);
+            height = Math.round(height * ratio);
+          }
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL("image/jpeg", 0.84));
+        };
+        img.onerror = () => resolve(ev.target.result);
+        img.src = ev.target.result;
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // =========================================================================
+  // 6. EVENTOS Y ACTUALIZACIÓN EN TIEMPO REAL
   // =========================================================================
   function setupEventListeners() {
-    // Cambio de pestañas del sidebar
     document.querySelectorAll(".tab-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         document.querySelectorAll(".tab-btn").forEach(b => {
@@ -1205,7 +1351,6 @@
       });
     });
 
-    // Cambio de plantilla desde la barra superior
     document.querySelectorAll(".tpl-btn").forEach(btn => {
       btn.addEventListener("click", () => {
         state.config.template = btn.dataset.tpl;
@@ -1215,12 +1360,10 @@
       });
     });
 
-    // Escucha delegada en tiempo real para inputs del sidebar
     sidebarContent.addEventListener("input", handleSidebarInput);
     sidebarContent.addEventListener("change", handleSidebarInput);
     sidebarContent.addEventListener("click", handleSidebarClick);
 
-    // Checkbox de vista previa de documentos en el visor
     if (chkPreviewDocs) {
       chkPreviewDocs.addEventListener("change", (e) => {
         state.config.includeDocsInPrint = e.target.checked;
@@ -1230,7 +1373,6 @@
       });
     }
 
-    // Botones de Impresión / Exportación PDF
     document.getElementById("btnPrintResumen")?.addEventListener("click", () => {
       const prev = state.config.includeDocsInPrint;
       state.config.includeDocsInPrint = false;
@@ -1251,12 +1393,10 @@
       }, 300);
     });
 
-    // Controles de Zoom
     document.getElementById("btnZoomIn")?.addEventListener("click", () => setZoom(zoomLevel + 10));
     document.getElementById("btnZoomOut")?.addEventListener("click", () => setZoom(zoomLevel - 10));
     document.getElementById("btnZoomReset")?.addEventListener("click", () => setZoom(100));
 
-    // Exportar / Importar JSON y Restaurar
     document.getElementById("btnExportJson")?.addEventListener("click", exportJson);
     document.getElementById("inputImportJson")?.addEventListener("change", importJson);
     document.getElementById("btnResetDefault")?.addEventListener("click", () => {
@@ -1268,15 +1408,13 @@
       }
     });
 
-    // Clic en píldoras de "Ver sustento" dentro del visor A4
     cvDocumentRoot.addEventListener("click", (e) => {
       const pill = e.target.closest(".doc-folio-pill");
       if (pill) {
-        openCertModal(pill.dataset.pages, pill.dataset.title);
+        openItemCertModal(pill.dataset.list, Number(pill.dataset.index), pill.dataset.title);
       }
     });
 
-    // Cerrar modal de certificados
     document.getElementById("btnCloseModal")?.addEventListener("click", () => certModal.close());
     certModal?.addEventListener("click", (e) => {
       if (e.target === certModal) certModal.close();
@@ -1286,15 +1424,22 @@
   function handleSidebarInput(e) {
     const target = e.target;
 
-    // Subida de fotografía personalizada
+    // Subida de fotografía de perfil
     if (target.id === "uploadPhotoInput" && target.files?.[0]) {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        state.personal.foto = ev.target.result;
-        saveState();
-        updatePreview();
-      };
-      reader.readAsDataURL(target.files[0]);
+      readImageCompressed(target.files[0]).then(dataUrl => {
+        if (dataUrl) {
+          state.personal.foto = dataUrl;
+          saveState();
+          updatePreview();
+        }
+      });
+      return;
+    }
+
+    // Subida de certificados / constancias (PDF o Imagen) en cualquier tarjeta
+    if (target.dataset.uploadList && target.files?.length) {
+      handleAttachmentUpload(target.files, target.dataset.uploadList, Number(target.dataset.uploadIndex));
+      target.value = "";
       return;
     }
 
@@ -1309,13 +1454,13 @@
       return;
     }
 
-    // Binding de listas de objetos (formacion, experiencia, diplomados, cursos, adicionales)
+    // Binding de listas de objetos
     if (target.dataset.list !== undefined && target.dataset.index !== undefined) {
       const listName = target.dataset.list;
       const idx = Number(target.dataset.index);
       const field = target.dataset.field;
       const item = state[listName]?.[idx];
-      if (!item) return;
+      if (!item || !field) return;
 
       if (target.type === "checkbox") {
         item[field] = target.checked;
@@ -1328,7 +1473,7 @@
         item[field] = target.value
           .split(",")
           .map(s => parseInt(s.trim(), 10))
-          .filter(n => !isNaN(n) && n >= 2 && n <= 55);
+          .filter(n => !isNaN(n) && n >= 2 && n <= 99);
       } else if (target.type === "number") {
         item[field] = Number(target.value) || 0;
       } else {
@@ -1351,14 +1496,12 @@
   }
 
   function handleSidebarClick(e) {
-    // Botón de vista rápida de certificado escaneado
     const docBtn = e.target.closest(".btn-doc-preview");
     if (docBtn) {
-      openCertModal(docBtn.dataset.pages, docBtn.dataset.title);
+      openItemCertModal(docBtn.dataset.list, Number(docBtn.dataset.index), docBtn.dataset.title);
       return;
     }
 
-    // Añadir software tag
     if (e.target.id === "btnAddSw") {
       const input = document.getElementById("newSwInput");
       const val = input?.value.trim();
@@ -1371,7 +1514,6 @@
       return;
     }
 
-    // Añadir competencia blanda
     if (e.target.id === "btnAddCb") {
       const input = document.getElementById("newCbInput");
       const val = input?.value.trim();
@@ -1391,7 +1533,13 @@
     const listName = actionBtn.dataset.list;
     const idx = Number(actionBtn.dataset.index);
 
-    if (action === "remove-sw") {
+    if (action === "remove-custom-doc") {
+      const docIdx = Number(actionBtn.dataset.docIndex);
+      state[listName]?.[idx]?.customDocs?.splice(docIdx, 1);
+      saveState();
+      renderSidebar();
+      updatePreview();
+    } else if (action === "remove-sw") {
       state.competencias.softwareTags.splice(idx, 1);
       saveState();
       renderSidebar();
@@ -1447,6 +1595,7 @@
         destacado: "",
         detalles: [],
         paginasDoc: [],
+        customDocs: [],
         visible: true
       });
     } else if (listName === "experiencia") {
@@ -1467,6 +1616,7 @@
         esEspecifica: true,
         descripcion: "Descripción de las actividades realizadas en el servicio o puesto.",
         paginasDoc: [],
+        customDocs: [],
         visible: true
       });
     } else if (listName === "diplomados") {
@@ -1480,6 +1630,7 @@
         registro: "",
         detalle: "",
         paginasDoc: [],
+        customDocs: [],
         visible: true
       });
     } else if (listName === "cursos") {
@@ -1492,6 +1643,7 @@
         nota: "Aprobado",
         registro: "",
         paginasDoc: [],
+        customDocs: [],
         visible: true
       });
     } else if (listName === "adicionales") {
@@ -1502,6 +1654,7 @@
         fecha: "2026",
         detalle: "",
         paginasDoc: [],
+        customDocs: [],
         visible: true
       });
     }
@@ -1511,17 +1664,32 @@
   }
 
   // =========================================================================
-  // 6. UTILIDADES (MODAL DE CERTIFICADOS, ZOOM, JSON)
+  // 7. UTILIDADES (MODAL DE CERTIFICADOS, ZOOM, JSON)
   // =========================================================================
-  function openCertModal(pagesStr, title) {
-    if (!pagesStr) return;
-    const pages = pagesStr.split(",").map(s => s.trim()).filter(Boolean);
+  function openItemCertModal(listName, idx, title) {
+    const item = state[listName]?.[idx];
+    if (!item) return;
+
+    const imagesHtml = [];
+    if (Array.isArray(item.paginasDoc)) {
+      for (const p of item.paginasDoc) {
+        const pPad = String(p).padStart(2, "0");
+        imagesHtml.push(`<img src="assets/certificados/pag_${pPad}.jpg" alt="Certificado Página ${pPad}" />`);
+      }
+    }
+    if (Array.isArray(item.customDocs)) {
+      for (const docObj of item.customDocs) {
+        if (docObj?.dataUrl) {
+          imagesHtml.push(`<img src="${escapeHtml(docObj.dataUrl)}" alt="${escapeHtml(docObj.name || "Sustento Adjunto")}" />`);
+        }
+      }
+    }
+
+    if (imagesHtml.length === 0) return;
+
     certModalTitle.textContent = title || "Sustento Documentado";
-    certModalSubtitle.textContent = `Visualizando folio(s) del PDF original: Página(s) ${pages.join(", ")}`;
-    certModalBody.innerHTML = pages.map(p => {
-      const pPad = String(p).padStart(2, "0");
-      return `<img src="assets/certificados/pag_${pPad}.jpg" alt="Certificado Página ${pPad}" />`;
-    }).join("");
+    certModalSubtitle.textContent = `Visualizando ${imagesHtml.length} hoja(s) de sustento acreditado`;
+    certModalBody.innerHTML = imagesHtml.join("");
     certModal.showModal();
   }
 
