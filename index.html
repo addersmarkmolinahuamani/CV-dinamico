@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CV Dinámico — Adders Mark Molina Huamani</title>
+  <meta name="description" content="Aplicativo interactivo de CV Dinámico y Documentado en tiempo real — Ing. Sanitario Adders Mark Molina Huamani" />
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Lora:ital,wght@0,400;0,600;0,700;1,400&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- BARRA SUPERIOR DE CONTROL (Se oculta al imprimir/exportar PDF) -->
+  <header class="app-topbar no-print">
+    <div class="topbar-brand">
+      <div class="brand-badge">CV</div>
+      <div>
+        <h1 class="brand-title">CV Dinámico &amp; Documentado</h1>
+        <p class="brand-subtitle">Editor en tiempo real • Adders Mark Molina Huamani</p>
+      </div>
+    </div>
+
+    <!-- Estadísticas en vivo -->
+    <div class="topbar-metrics" id="liveMetricsBar">
+      <div class="metric-pill" title="Tiempo total de las experiencias activadas">
+        <span class="metric-label">Exp. Activa:</span>
+        <strong class="metric-value" id="metricExpTotal">0 años, 0 meses</strong>
+      </div>
+      <div class="metric-pill" title="Horas lectivas sumadas en Diplomados y Cursos activos">
+        <span class="metric-label">Horas Capacitación:</span>
+        <strong class="metric-value" id="metricHorasTotal">0 hrs</strong>
+      </div>
+      <div class="metric-pill" title="Folios sustentatorios vinculados a los ítems activos">
+        <span class="metric-label">Anexos Activos:</span>
+        <strong class="metric-value" id="metricDocsTotal">0 folios</strong>
+      </div>
+    </div>
+
+    <!-- Controles rápidos de Plantilla y Exportación -->
+    <div class="topbar-actions">
+      <div class="template-switcher" role="group" aria-label="Selector de plantilla de visor">
+        <button type="button" class="tpl-btn" id="btnTplOriginal" data-tpl="original" title="Diseño fiel a la página 1 de tu PDF original (Cabecera turquesa + Foto + Logos)">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/></svg>
+          Diseño Actual (Fiel)
+        </button>
+        <button type="button" class="tpl-btn active" id="btnTplEjecutivo" data-tpl="ejecutivo" title="Propuesta mejorada Ejecutiva / ATS ideal para convocatorias SUNASS, OTASS, CAS y Licitaciones">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          Propuesta Ejecutiva Pro
+        </button>
+      </div>
+
+      <div class="export-group">
+        <button type="button" class="btn btn-secondary" id="btnPrintResumen" title="Exportar en PDF únicamente las hojas del CV Resumen">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          PDF Solo Resumen
+        </button>
+        <button type="button" class="btn btn-primary" id="btnPrintDocumentado" title="Exportar en PDF el CV Resumen + Todos los certificados/constancias de los ítems activos">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><path d="M9 15l2 2 4-4"/></svg>
+          PDF CV Documentado
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- CONTENEDOR PRINCIPAL: BARRA LATERAL IZQUIERDA + VISOR DERECHO -->
+  <div class="app-workspace">
+    <!-- PANEL LATERAL EDITOR -->
+    <aside class="editor-sidebar no-print" id="editorSidebar">
+      <!-- Navegación por pestañas del editor -->
+      <nav class="sidebar-tabs" role="tablist" aria-label="Secciones del CV">
+        <button type="button" class="tab-btn active" data-tab="perfil" role="tab" aria-selected="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <span>Perfil</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="academica" role="tab" aria-selected="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg>
+          <span>Académica</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="experiencia" role="tab" aria-selected="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+          <span>Experiencia</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="diplomados" role="tab" aria-selected="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>
+          <span>Diplomados</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="cursos" role="tab" aria-selected="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+          <span>Cursos</span>
+        </button>
+        <button type="button" class="tab-btn" data-tab="ajustes" role="tab" aria-selected="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <span>Ajustes</span>
+        </button>
+      </nav>
+
+      <!-- Cuerpo desplazable del editor -->
+      <div class="sidebar-body" id="sidebarContent">
+        <!-- Se inyecta dinámicamente desde app.js según la pestaña activa -->
+      </div>
+
+      <!-- Pie de barra lateral: Estado de guardado y respaldos -->
+      <div class="sidebar-footer">
+        <span class="save-indicator" id="saveStatus">
+          <span class="status-dot"></span> Guardado automático activo
+        </span>
+        <div class="footer-btns">
+          <button type="button" class="btn-link" id="btnExportJson" title="Descargar copia de seguridad en formato JSON">Exportar JSON</button>
+          <span>•</span>
+          <label class="btn-link" for="inputImportJson" title="Cargar archivo JSON previamente exportado">Importar JSON</label>
+          <input type="file" id="inputImportJson" accept=".json" hidden />
+          <span>•</span>
+          <button type="button" class="btn-link text-danger" id="btnResetDefault" title="Restaurar los datos originales extraídos del PDF">Restaurar Base</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ÁREA DEL VISOR DE CV EN TIEMPO REAL -->
+    <main class="preview-stage" id="previewStage">
+      <!-- Barra flotante de vista previa -->
+      <div class="stage-toolbar no-print">
+        <div class="stage-toolbar-left">
+          <span class="badge-live">VISTA PREVIA A4 EN TIEMPO REAL</span>
+          <label class="toggle-inline" title="Mostrar u ocultar al final del visor las hojas escaneadas de certificados de los ítems seleccionados">
+            <input type="checkbox" id="chkPreviewDocs" />
+            <span>Incluir Anexos Documentados en el Visor (<span id="lblCountDocs">0</span> págs.)</span>
+          </label>
+        </div>
+        <div class="stage-toolbar-right">
+          <button type="button" class="zoom-btn" id="btnZoomOut" title="Reducir zoom">−</button>
+          <span class="zoom-label" id="lblZoom">100%</span>
+          <button type="button" class="zoom-btn" id="btnZoomIn" title="Aumentar zoom">+</button>
+          <button type="button" class="zoom-btn" id="btnZoomReset" title="Restablecer zoom">1:1</button>
+        </div>
+      </div>
+
+      <!-- Contenedor de páginas A4 (Se imprime directamente en calidad vectorial) -->
+      <div class="cv-print-wrapper" id="cvPrintWrapper">
+        <div id="cvDocumentRoot" class="cv-document">
+          <!-- Renderizado en tiempo real por app.js -->
+        </div>
+        <div id="cvAnnexesRoot" class="cv-annexes">
+          <!-- Hojas de certificados sustentatorios activos -->
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL VISOR RÁPIDO DE CERTIFICADOS ESCANEADOS -->
+  <dialog class="cert-modal no-print" id="certModal">
+    <div class="cert-modal-header">
+      <div>
+        <h3 id="certModalTitle">Sustento Documentado</h3>
+        <p id="certModalSubtitle">Vista previa de folios escaneados</p>
+      </div>
+      <button type="button" class="modal-close-btn" id="btnCloseModal" aria-label="Cerrar ventana">✕</button>
+    </div>
+    <div class="cert-modal-body" id="certModalBody">
+      <!-- Imágenes de los certificados -->
+    </div>
+  </dialog>
+
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

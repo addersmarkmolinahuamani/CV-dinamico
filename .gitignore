@@ -1,0 +1,6 @@
+# Ignorar el archivo PDF pesado original para mantener el repositorio ligero y rápido
+CV documentado 17.6.2026.pdf
+*.pyc
+__pycache__/
+.DS_Store
+Thumbs.db
