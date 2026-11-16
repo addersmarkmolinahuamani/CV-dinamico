@@ -108,6 +108,27 @@ window.DEFAULT_CV_DATA = {
   ],
   experiencia: [
     {
+      id: "exp-sunass-actual",
+      entidad: "SUNASS — Superintendencia Nacional de Servicios de Saneamiento",
+      area: "Dirección de Fiscalización",
+      cargo: "Analista en Fiscalización",
+      cargoCorto: "Analista en Fiscalización",
+      documentoSustento: "Contrato / Constancia de Trabajo Vigente",
+      fechaInicio: "2025-11-07",
+      fechaFin: "",
+      enCurso: true,
+      diasDeclarados: 0,
+      periodoTexto: "07 Noviembre 2025 – Actualidad",
+      monto: "",
+      ubicacion: "Lima / Nacional",
+      sector: "Público",
+      esEspecifica: true,
+      descripcion: "Análisis, seguimiento y evaluación de actividades de fiscalización sobre el cumplimiento de metas de gestión y aspectos operacionales de los servicios de agua potable y saneamiento.",
+      paginasDoc: [],
+      customDocs: [],
+      visible: true
+    },
+    {
       id: "exp-sunass-4",
       entidad: "SUNASS — Superintendencia Nacional de Servicios de Saneamiento",
       area: "Oficina de Administración y Finanzas / Fiscalización",

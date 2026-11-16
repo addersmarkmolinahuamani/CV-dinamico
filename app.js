@@ -46,12 +46,45 @@
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        return deepMerge(structuredClone(window.DEFAULT_CV_DATA), parsed);
+        const merged = deepMerge(structuredClone(window.DEFAULT_CV_DATA), parsed);
+        return normalizeLegacyState(merged);
       }
     } catch (err) {
       console.warn("No se pudo leer localStorage, cargando datos por defecto:", err);
     }
     return structuredClone(window.DEFAULT_CV_DATA);
+  }
+
+  function normalizeLegacyState(st) {
+    if (!Array.isArray(st.experiencia)) return st;
+
+    // 1. Si el usuario creó manualmente el ítem de "Analista en Fiscalización", limpiarlo y activar "enCurso" (hasta hoy)
+    let foundAnalista = false;
+    st.experiencia.forEach(exp => {
+      const roleStr = `${exp.cargoCorto || ""} ${exp.cargo || ""}`.toLowerCase();
+      if (roleStr.includes("analista en fiscalizaci")) {
+        foundAnalista = true;
+        exp.enCurso = true;
+        if (!exp.fechaInicio || exp.fechaInicio === "2026-01-01") {
+          exp.fechaInicio = "2025-11-07";
+        }
+        if (exp.entidad && exp.entidad.includes("Nombre de la Entidad o Empres")) {
+          exp.entidad = "SUNASS — Superintendencia Nacional de Servicios de Saneamiento";
+        }
+        if (exp.descripcion === "Descripción de las actividades realizadas en el servicio o puesto.") {
+          exp.descripcion = "Análisis, seguimiento y evaluación de actividades de fiscalización sobre el cumplimiento de metas de gestión y aspectos operacionales de los servicios de agua potable y saneamiento.";
+        }
+      }
+    });
+
+    // 2. Si no existía aún en su localStorage guardado, asegurarse de inyectar el registro por defecto de Analista en Fiscalización
+    if (!foundAnalista) {
+      const defAnalista = window.DEFAULT_CV_DATA.experiencia.find(e => e.id === "exp-sunass-actual");
+      if (defAnalista) {
+        st.experiencia.unshift(structuredClone(defAnalista));
+      }
+    }
+    return st;
   }
 
   function saveState() {
@@ -95,22 +128,79 @@
   // =========================================================================
   // 2. CÁLCULO AUTOMÁTICO DE EXPERIENCIA, HORAS LECTIVAS Y ANEXOS
   // =========================================================================
+  const MONTHS_ES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+  ];
+
+  function parseLocalDate(dateStr) {
+    if (!dateStr) return null;
+    const parts = String(dateStr).split("-").map(Number);
+    if (parts.length !== 3 || parts.some(isNaN)) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
+  }
+
+  function getTodayLocal() {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0);
+  }
+
+  function formatDateSpanish(dateStr) {
+    const d = parseLocalDate(dateStr);
+    if (!d) return "";
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = MONTHS_ES[d.getMonth()];
+    const year = d.getFullYear();
+    return `${day} ${month} ${year}`;
+  }
+
+  function getItemEffectiveDays(item) {
+    if (item.enCurso && item.fechaInicio) {
+      const start = parseLocalDate(item.fechaInicio);
+      const today = getTodayLocal();
+      if (start && today >= start) {
+        return Math.round((today - start) / (1000 * 60 * 60 * 24)) + 1;
+      }
+    }
+    const declared = Number(item.diasDeclarados);
+    if (!isNaN(declared) && declared > 0) {
+      return declared;
+    }
+    if (item.fechaInicio && item.fechaFin) {
+      const d1 = parseLocalDate(item.fechaInicio);
+      const d2 = parseLocalDate(item.fechaFin);
+      if (d1 && d2 && d2 >= d1) {
+        return Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
+      }
+    }
+    return 0;
+  }
+
+  function getItemEffectivePeriodoTexto(item) {
+    if (item.enCurso && item.fechaInicio) {
+      const days = getItemEffectiveDays(item);
+      const startLabel = formatDateSpanish(item.fechaInicio);
+      return `${startLabel} – Actualidad (${days} días a hoy)`;
+    }
+    return item.periodoTexto || "";
+  }
+
   function calculateExperienceStats() {
+    // Sincronizar días dinámicos para experiencias "En curso (Hasta Hoy)"
+    state.experiencia.forEach(item => {
+      if (item.enCurso && item.fechaInicio) {
+        item.diasDeclarados = getItemEffectiveDays(item);
+        item.periodoTexto = getItemEffectivePeriodoTexto(item);
+      }
+    });
+
     const activeExp = state.experiencia.filter(item => item.visible);
     const activeSpecExp = activeExp.filter(item => item.esEspecifica);
 
     const calcDays = (list) => {
       let totalDays = 0;
       for (const item of list) {
-        const declared = Number(item.diasDeclarados);
-        if (!isNaN(declared) && declared > 0) {
-          totalDays += declared;
-        } else if (item.fechaInicio && item.fechaFin) {
-          const d1 = new Date(item.fechaInicio);
-          const d2 = new Date(item.fechaFin);
-          const diff = Math.round((d2 - d1) / (1000 * 60 * 60 * 24)) + 1;
-          if (diff > 0) totalDays += diff;
-        }
+        totalDays += getItemEffectiveDays(item);
       }
       return totalDays;
     };
@@ -1050,12 +1140,23 @@
               <input type="text" class="form-input" data-list="experiencia" data-index="${idx}" data-field="cargoCorto" value="${escapeHtml(exp.cargoCorto || exp.cargo)}" />
             </div>
             <div class="form-group">
-              <label class="form-label">Periodo (Texto en CV)</label>
-              <input type="text" class="form-input" data-list="experiencia" data-index="${idx}" data-field="periodoTexto" value="${escapeHtml(exp.periodoTexto)}" />
+              <label class="form-label">Fecha de Inicio (Para cálculo)</label>
+              <input type="date" class="form-input" data-list="experiencia" data-index="${idx}" data-field="fechaInicio" value="${escapeHtml(exp.fechaInicio || "")}" />
             </div>
             <div class="form-group">
-              <label class="form-label">Días Acreditados (Para Cálculo)</label>
-              <input type="number" class="form-input" data-list="experiencia" data-index="${idx}" data-field="diasDeclarados" value="${escapeHtml(exp.diasDeclarados)}" />
+              <label class="form-label">Estado del Vínculo</label>
+              <label class="card-check-label" style="margin-top:7px; color:#38bdf8;">
+                <input type="checkbox" data-list="experiencia" data-index="${idx}" data-field="enCurso" ${exp.enCurso ? "checked" : ""} />
+                <span>⏳ En curso (Contabilizar hasta HOY)</span>
+              </label>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Periodo (Texto en CV)</label>
+              <input type="text" class="form-input" data-list="experiencia" data-index="${idx}" data-field="periodoTexto" value="${escapeHtml(exp.periodoTexto)}" ${exp.enCurso ? 'readonly title="Se actualiza automáticamente con la fecha de hoy"' : ""} />
+            </div>
+            <div class="form-group">
+              <label class="form-label">${exp.enCurso ? "Días Calculados a HOY (Automático)" : "Días Acreditados (Para Cálculo)"}</label>
+              <input type="number" class="form-input" data-list="experiencia" data-index="${idx}" data-field="diasDeclarados" value="${escapeHtml(exp.diasDeclarados)}" ${exp.enCurso ? 'readonly style="color:#34d399; font-weight:700;"' : ""} />
             </div>
             <div class="form-group">
               <label class="form-label">N° Constancia / Orden de Servicio</label>
@@ -1510,6 +1611,25 @@
         item[field] = target.checked;
         if (field === "visible") {
           target.closest(".form-card")?.classList.toggle("is-hidden-item", !target.checked);
+        }
+        if (field === "enCurso") {
+          if (target.checked && !item.fechaInicio) {
+            item.fechaInicio = "2025-11-07";
+          }
+          calculateExperienceStats();
+          saveState();
+          renderSidebar();
+          updatePreview();
+          return;
+        }
+      } else if (field === "fechaInicio") {
+        item[field] = target.value;
+        if (item.enCurso) {
+          calculateExperienceStats();
+          saveState();
+          renderSidebar();
+          updatePreview();
+          return;
         }
       } else if (field === "detalles") {
         item[field] = target.value.split("\n").map(s => s.trim()).filter(Boolean);
