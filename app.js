@@ -213,13 +213,13 @@
       const parts = [];
       if (years > 0) parts.push(`${years} ${years === 1 ? "año" : "años"}`);
       if (months > 0) parts.push(`${months} ${months === 1 ? "mes" : "meses"}`);
-      if (years === 0 && months === 0) parts.push(`${remDays} días`);
+      if (remDays > 0 || parts.length === 0) parts.push(`${remDays} ${remDays === 1 ? "día" : "días"}`);
       return {
         days,
         years,
         months,
         remDays,
-        shortText: parts.join(", ") || "0 meses",
+        shortText: parts.join(", "),
         fullText: `${years}a ${months}m ${remDays}d (${days} días)`
       };
     };
